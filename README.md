@@ -11,6 +11,7 @@ PinMap:
 |   INIT   |         | INIT_B            |
 |   DONE   |    7    | DONE_ARD/ALT_DONE |
 
+```
 //-Common----------------------------||-From PC----------------------------------||-To PC-----------------------------------||
 #define CMD_DEBUG               0x00 // no payload                               || {string}                                ||
 #define CMD_OK                  0x01 // no payload                               || no payload                              ||
@@ -52,3 +53,4 @@ PinMap:
 #define SPI_FLASH_MANUF_ID      0x90 // [dummy][dummy][0x00][manufacture id][device id]
 #define SPI_FLASH_JEDEC_ID      0x9F // [manufacture id][memory type][capacity]
 //-----------------------------------//-------------------------------------------------------------------------------------||
+```
