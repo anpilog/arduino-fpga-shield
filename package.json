@@ -1,0 +1,30 @@
+{
+  "name": "arduino-fpga-shield",
+  "version": "0.0.1",
+  "description": "Control app for Arduino-Compatible Spartan-6 FPGA Board",
+  "main": "index.js",
+  "dependencies": {
+    "node-slip": "^0.0.2",
+    "node-logging": "^0.1.6",
+    "serialport": "^1.4.6"
+  },
+  "devDependencies": {},
+  "scripts": {
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anpilog/arduino-fpga-shield"
+  },
+  "keywords": [
+    "Arduino",
+    "FPGA",
+    "SPI",
+    "flash"
+  ],
+  "author": "Andrii Anpilogov",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/anpilog/arduino-fpga-shield/issues"
+  },
+  "homepage": "https://github.com/anpilog/arduino-fpga-shield"
+}
