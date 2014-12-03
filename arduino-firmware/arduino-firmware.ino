@@ -1,7 +1,7 @@
 #include <SPI.h>
 
 //-----------------------------------------------------------
-#define SLIP_PACKET_LENGTH 256
+#define SLIP_PACKET_LENGTH 512
 
 #define SLIP_END	0xC0
 #define SLIP_ESC	0xDB
@@ -15,7 +15,7 @@
 class SLIP
 {
 public:
-  typedef void (*command_collback_t)(char*, int length);
+  typedef void (*command_collback_t)(byte*, int length);
 
   SLIP():
   callback(NULL)
@@ -98,12 +98,12 @@ public:
     }
 
   }
-  void slipStart(char cmd)
+  void slipStart(byte cmd)
   {
     Serial.write(SLIP_END);
-    Serial.write(cmd);
+    slipSend(cmd);
   }
-  void slipSend(char ch)
+  void slipSend(byte ch)
   {
     if (ch == SLIP_END)
     {
@@ -120,7 +120,7 @@ public:
       Serial.write(ch);
     }
   }
-  void slipSend(char *data, int len)
+  void slipSend(byte *data, int len)
   {
     while(len--)
     {
@@ -135,7 +135,7 @@ public:
 private:
   int index;
   int state;
-  char buffer[SLIP_PACKET_LENGTH];
+  byte buffer[SLIP_PACKET_LENGTH];
   command_collback_t callback;
 };
 //-----------------------------------------------------------
@@ -156,6 +156,7 @@ SLIP slip;
 #define CMD_DEBUG               0x00 // no payload                               || {string}                                ||
 #define CMD_OK                  0x01 // no payload                               || no payload                              ||
 #define CMD_ERROR               0x02 // no payload                               || no payload                              ||
+#define CMD_ECHO                0x03 // no payload                               || no payload                              ||
 //-SPI-------------------------------//------------------------------------------||-----------------------------------------||
 #define CMD_SPI_MODE            0x10 // [mode][bit order][speed prescaler]       || no payload                              ||
 #define CMD_SPI_REQUEST         0x11 // {data}                                   || {data}                                  ||
@@ -169,7 +170,7 @@ SLIP slip;
 #define CMD_WRITE_STATUS        0x83 // [status byte]                            || no payload                              ||
 #define CMD_READ_DATA           0x84 // [A23-A16][A15-A8][A7-A0][length]         || [A23-A16][A15-A8][A7-A0]{data}          ||
 #define CMD_FAST_READ           0x85 // [A23-A16][A15-A8][A7-A0][length]         || [A23-A16][A15-A8][A7-A0]{data}          ||
-#define CMD_PAGE_PROGRAM        0x86 // [A23-A16][A15-A8][A7-A0][validate]{data} || [A23-A16][A15-A8][A7-A0][result]        ||
+#define CMD_PAGE_PROGRAM        0x86 // [A23-A16][A15-A8][A7-A0]{data}           || [A23-A16][A15-A8][A7-A0][result]        ||
 #define CMD_BLOCK_ERASE         0x87 // [A23-A16][A15-A8][A7-A0]                 || no payload                              ||
 #define CMD_SECTOR_ERASE        0x88 // [A23-A16][A15-A8][A7-A0]                 || no payload                              ||
 #define CMD_CHIP_ERASE          0x89 // no payload                               || no payload                              ||
@@ -212,11 +213,16 @@ byte readStatus()
   return status;
 }
 //-----------------------------------------------------------
-void cammandProcessor(char* buffer, int length)
+void cammandProcessor(byte* buffer, int length)
 {
   byte cmd = buffer[0];
   switch(cmd)
   {
+    //--------------------------------------------------------
+    case CMD_ECHO:
+      slip.slipStart(cmd);
+      slip.slipEnd();
+      break;
     //--------------------------------------------------------
     case CMD_SPI_MODE:
       SPI.setDataMode(buffer[1]);
@@ -244,7 +250,7 @@ void cammandProcessor(char* buffer, int length)
       SPI.transfer(SPI_FLASH_WRITE_ENABLE);
       digitalWrite(SS, HIGH);
       
-      slip.slipStart(cmd);
+      slip.slipStart(CMD_WRITE_ENABLE);
       slip.slipEnd();
       break;
     //--------------------------------------------------------
@@ -310,41 +316,22 @@ void cammandProcessor(char* buffer, int length)
     case CMD_PAGE_PROGRAM:
     {
       digitalWrite(SS, LOW);
-      SPI.transfer(SPI_FLASH_READ_DATA);
+      SPI.transfer(SPI_FLASH_PAGE_PROGRAM);
       SPI.transfer(buffer[1]);
       SPI.transfer(buffer[2]);
       SPI.transfer(buffer[3]);
-      for(int i = 5; i < length; i++)
+      for(int i = 4; i < length; i++)
       {
         SPI.transfer(buffer[i]);
       }
       digitalWrite(SS, HIGH);
       while(readStatus() & STATUS_WIP);
       
-      byte result = 1;
-      if (buffer[4])
-      {
-        digitalWrite(SS, LOW);
-        SPI.transfer(SPI_FLASH_READ_DATA);
-        SPI.transfer(buffer[1]);
-        SPI.transfer(buffer[2]);
-        SPI.transfer(buffer[3]);
-        for(int i = 5; i < length; i++)
-        {
-          if (buffer[i] != SPI.transfer(0x00))
-          {
-            result = 0;
-            break;
-          }
-        }
-        digitalWrite(SS, HIGH);
-      }
-
       slip.slipStart(cmd);
       slip.slipSend(buffer[1]);
       slip.slipSend(buffer[2]);
       slip.slipSend(buffer[3]);
-      slip.slipSend(result);
+      slip.slipSend(length-4);
       slip.slipEnd();
       }
       break;
@@ -421,6 +408,9 @@ void cammandProcessor(char* buffer, int length)
       slip.slipSend(SPI.transfer(0x00));
       slip.slipSend(SPI.transfer(0x00));
       slip.slipSend(SPI.transfer(0x00));
+      slip.slipSend(SPI.transfer(0x00));
+      slip.slipSend(SPI.transfer(0x00));
+      slip.slipSend(SPI.transfer(0x00));
       digitalWrite(SS, HIGH);      
       slip.slipEnd();
       break;
@@ -454,8 +444,10 @@ void loop()
     slip.process(Serial.read());
   }
 
-
-  delay(1000);
+//  digitalWrite(SS,      HIGH);
+//  delay(1000);
+//  digitalWrite(SS,      LOW);
+//  delay(1000);
 }
 //===========================================================
 

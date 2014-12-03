@@ -1,9 +1,14 @@
 var slip        = require('node-slip')
 var log         = require('node-logging')
 var SerialPort  = require('serialport').SerialPort;
+var Emmiter     = require("events").EventEmitter;
 
 log.setLevel('debug');
 
+//---------------------------//------------------------------------------||-----------------------------------------||
+var CMD_DEBUG         = 0x00 // {debug message}                          || {debug message}                         ||
+var CMD_ECHO          = 0x03 // no payload                               || no payload                              ||
+//---------------------------//------------------------------------------||-----------------------------------------||
 var CMD_SPI_MODE      = 0x10 // [mode][bit order][speed prescaler]       || no payload                              ||
 var CMD_SPI_REQUEST   = 0x11 // {data}                                   || {data}                                  ||
 //---------------------------//------------------------------------------||-----------------------------------------||
@@ -16,7 +21,7 @@ var CMD_READ_STATUS   = 0x82 // no payload                               || [sta
 var CMD_WRITE_STATUS  = 0x83 // [status byte]                            || no payload                              ||
 var CMD_READ_DATA     = 0x84 // [A23-A16][A15-A8][A7-A0][length]         || [A23-A16][A15-A8][A7-A0]{data}          ||
 var CMD_FAST_READ     = 0x85 // [A23-A16][A15-A8][A7-A0][length]         || [A23-A16][A15-A8][A7-A0]{data}          ||
-var CMD_PAGE_PROGRAM  = 0x86 // [A23-A16][A15-A8][A7-A0][validate]{data} || [A23-A16][A15-A8][A7-A0][result]        ||
+var CMD_PAGE_PROGRAM  = 0x86 // [A23-A16][A15-A8][A7-A0]{data}           || [A23-A16][A15-A8][A7-A0][result]        ||
 var CMD_BLOCK_ERASE   = 0x87 // [A23-A16][A15-A8][A7-A0]                 || no payload                              ||
 var CMD_SECTOR_ERASE  = 0x88 // [A23-A16][A15-A8][A7-A0]                 || no payload                              ||
 var CMD_CHIP_ERASE    = 0x89 // no payload                               || no payload                              ||
@@ -24,26 +29,42 @@ var CMD_POWER_DOWN    = 0x8A // no payload                               || no p
 var CMD_DEVICE_ID     = 0x8B // no payload                               || [device id]                             ||
 var CMD_MANUF_ID      = 0x8C // no payload                               || [manufacture id]                        ||
 var CMD_JEDEC_ID      = 0x8D // no payload                               || [manufacture id][memory type][capacity] ||
+//  -------------------------//-------------------------------------------------------------------------------------||
+var STATUS_REG_SRP    = 0x80 // The Status Register Protect              ||                                         ||
+var STATUS_REG_REV    = 0x40 // Reserved Bits                            ||                                         ||
+var STATUS_REG_BP3    = 0x20 // Block Protect Bits BP3                   ||                                         ||
+var STATUS_REG_BP2    = 0x10 // Block Protect Bits BP2                   ||                                         ||
+var STATUS_REG_BP1    = 0x08 // Block Protect Bits BP1                   ||                                         ||
+var STATUS_REG_BP0    = 0x04 // Block Protect Bits BP0                   ||                                         ||
+var STATUS_REG_WEL    = 0x02 // Write Enable Latch                       ||                                         ||
+var STATUS_REG_WIP    = 0x01 // Write In Progress                        ||                                         ||
+//  -------------------------//-------------------------------------------------------------------------------------||
 
-(function Arduino(serialport)
+module.exports = function Arduino(serialport)
 {
-  var self = this;
+  var self = new Emmiter();
 
-  self.serial = new SerialPort(process.argv[2], {
+  self.serial = new SerialPort(serialport, {
     baudrate: 115200,
     buffersize: 1
   });
 
   self.serial.on('data', function(data) {
     if (self.connected)
-      {
-        console.log('SERIAL RECEIVED: ' + data);
-      }
+    {
+      //console.log('SERIAL RECEIVED: ' + data);
+      self.parser.write(data);
+    }
   });
 
   self.serial.on('open', function() {
     console.log('SERIAL OPEN');
-    on();
+    self.connected = true;
+    self.emit('ready');
+  });
+
+  self.serial.on('error', function(err) {
+    console.log('SERIAL ERROR', err);
   });
 
   function onData(msg) {
@@ -51,14 +72,14 @@ var CMD_JEDEC_ID      = 0x8D // no payload                               || [man
   };
 
   function onFraming(msg) {
-    log.error('SLIP framing error!');
+    log.err('SLIP framing error!');
   };
 
   function onEscape(msg) {
-    log.error('SLIP escape error!');
+    log.err('SLIP escape error!');
   };
 
-  this.parser = new slip.parser({
+  self.parser = new slip.parser({
     data    : onData,
     framing : onFraming,
     escape  : onEscape
@@ -66,28 +87,46 @@ var CMD_JEDEC_ID      = 0x8D // no payload                               || [man
 
   function setCallback(cmd, callback)
   {
-    this.ackCmd = cmd;
-    this.callback = callback;
+    self.ackCmd = cmd;
+    self.callback = callback;
+    self.timeout = setTimeout(function() {
+      log.err('Command execution timeout!');
+      self.callback(true);
+      self.ackCmd = undefined;
+      self.callback = undefined;
+    }, 100);
   }
 
   self.process = function(msg)
   {
-    if (this.callback)
+    if (self.callback)
     {
-      if (msg[0] == this.ackCmd)
+      clearTimeout(self.timeout);
+      if (msg[0] == self.ackCmd)
       {
-          callback(false, msg.slice[1]);
+        self.callback(false, msg.slice(1));
+      }
+      else if (msg[0] == CMD_DEBUG)
+      {
+        self.emit('debug', msg.slice(1).toString('hex'));
       }
       else
       {
-        callback(true, msg.slice[1]);
+        console.log('Wrong command:', msg[0]);
+        self.callback(true, msg.slice(1));
       }
     }
   };
 
+  self.echo = function(callback)
+  {
+    self.serial.write(slip.generator(new Buffer([CMD_ECHO])));
+    setCallback(CMD_ECHO, callback);
+  };
+
   self.spiMode = function(mode, order, prescaler, callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_SPI_MODE, mode, order, prescaler)));
+    self.serial.write(slip.generator(new Buffer([CMD_SPI_MODE, mode, order, prescaler])));
     setCallback(CMD_SPI_MODE, callback);
   };
 
@@ -96,13 +135,13 @@ var CMD_JEDEC_ID      = 0x8D // no payload                               || [man
     var buf = new Buffer(data.length + 1)
     buf[0] = CMD_SPI_REQUEST;
     data.copy(buf, 1)
-    this.serial.write(slip.generator(buf));
+    self.serial.write(slip.generator(buf));
     setCallback(CMD_SPI_REQUEST, callback);
   };
 
   self.deviceId = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_DEVICE_ID])));
+    self.serial.write(slip.generator(new Buffer([CMD_DEVICE_ID])));
     setCallback(CMD_DEVICE_ID, function(err, msg) {
       if (err)
         callback(true);
@@ -113,7 +152,7 @@ var CMD_JEDEC_ID      = 0x8D // no payload                               || [man
 
   self.manufactureId = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_MANUF_ID])));
+    self.serial.write(slip.generator(new Buffer([CMD_MANUF_ID])));
     setCallback(CMD_MANUF_ID, function(err, msg) {
       if (err)
         callback(true);
@@ -124,7 +163,7 @@ var CMD_JEDEC_ID      = 0x8D // no payload                               || [man
 
   self.jdecId = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_JEDEC_ID])));
+    self.serial.write(slip.generator(new Buffer([CMD_JEDEC_ID])));
     setCallback(CMD_JEDEC_ID, function(err, msg) {
       if (err)
         callback(true);
@@ -135,33 +174,82 @@ var CMD_JEDEC_ID      = 0x8D // no payload                               || [man
 
   self.chipErase = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_CHIP_ERASE])));
+    self.serial.write(slip.generator(new Buffer([CMD_CHIP_ERASE])));
     setCallback(CMD_CHIP_ERASE, callback);
   };
 
   self.writeStatus = function(status, callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_WRITE_STATUS, status])));
+    self.serial.write(slip.generator(new Buffer([CMD_WRITE_STATUS, status])));
     setCallback(CMD_WRITE_STATUS, callback);
   };
 
   self.readStatus = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_READ_STATUS])));
+    self.serial.write(slip.generator(new Buffer([CMD_READ_STATUS])));
     setCallback(CMD_READ_STATUS, function(err, msg) {
-      callback(err, msg[0]);
+      callback(err, {
+        wip: msg[0] & STATUS_REG_WIP ? true : false,
+        wel: msg[0] & STATUS_REG_WEL ? true : false,
+        bp0: msg[0] & STATUS_REG_BP0 ? true : false,
+        bp1: msg[0] & STATUS_REG_BP1 ? true : false,
+        bp2: msg[0] & STATUS_REG_BP2 ? true : false,
+        bp3: msg[0] & STATUS_REG_BP3 ? true : false,
+        rev: msg[0] & STATUS_REG_REV ? true : false,
+        srp: msg[0] & STATUS_REG_SRP ? true : false,
+      });
     });
   };
 
   self.writeEnable = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_WRITE_ENABLE])));
     setCallback(CMD_WRITE_ENABLE, callback);
+    self.serial.write(slip.generator(new Buffer([CMD_WRITE_ENABLE])));
   };
 
   self.writeDisable = function(callback)
   {
-    this.serial.write(slip.generator(new Buffer([CMD_WRITE_DISABLE])));
+    self.serial.write(slip.generator(new Buffer([CMD_WRITE_DISABLE])));
     setCallback(CMD_WRITE_DISABLE, callback);
   };
-})
+
+  self.readData = function(addr, length, callback)
+  {
+    self.serial.write(
+      slip.generator(new Buffer([
+        CMD_READ_DATA,
+        (addr >> 16) & 0xFF,
+        (addr >> 8) & 0xFF,
+        addr & 0xFF,
+        length
+    ])));
+    setCallback(CMD_READ_DATA, callback);
+  }
+
+  self.writeData = function(addr, data, callback)
+  {
+    self.writeEnable(function(err) {
+      console.log('writeEnable:', err);
+      if (err) return callback(true);
+
+      var buf = new Buffer(data.length + 4);
+      buf[0] = CMD_PAGE_PROGRAM;
+      buf[1] = (addr >> 16) & 0xFF;
+      buf[2] = (addr >> 8) & 0xFF;
+      buf[3] = addr & 0xFF;
+      data.copy(buf, 4);
+
+      setCallback(CMD_PAGE_PROGRAM, function(err, msg) {
+        console.log('CMD_PAGE_PROGRAM:', err, msg);
+        if (err) return callback(true);
+        callback(false, (msg[0] << 16) | (msg[1] << 8) | msg[2], msg[3]);
+      });
+
+      console.log('Write data:', buf);
+      self.serial.write(slip.generator(buf));
+
+    });
+  }
+
+  return self;
+}
