@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 var program        = require('commander');
 var arduino_serial = require('./arduino-serial');
 var log            = require('node-logging');
