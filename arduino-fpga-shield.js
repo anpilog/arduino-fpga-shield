@@ -6,36 +6,41 @@ var fs             = require('fs');
 log.setLevel('debug');
 //===========================================================================
 program
-.option('-e, --erase'       , 'Erase flash'                   )
-.option('-r, --read [file]' , 'Read whole flash into file'    )
-.option('-w, --write [file]', 'Write file into flash'         )
-.option('-p, --port [file]' , 'Arduino serial port (required)')
-.option('-i, --info'        , 'Get SPI flash info'            )
+.option('-e, --erase'        , 'Erase flash'                   )
+.option('-r, --read [file]'  , 'Read whole flash into file'    )
+.option('-w, --write [file]' , 'Write file into flash'         )
+.option('-p, --port [file]'  , 'Arduino serial port (required)')
+.option('-i, --info'         , 'Get SPI flash info'            )
+.option('-s, --size [number]', 'Bytes to read'                 )
 .version('0.0.1')
 .parse(process.argv);
 
 if (!program.port)
   program.help();
-if (!program.read && !program.write && !program.info)
+if (!program.read && !program.write && !program.info && !program.erase)
   program.help();
 
+if (program.read && !program.size)
+  program.help()
+
 if (program.erase)
-  console.log('Erase flash chip.');
+  log.inf('Erase flash chip.');
 
 if (program.port)
-  console.log('Use', program.port, 'to talk to Arduino.');
+  log.inf('Use ' + program.port + ' to talk to Arduino.');
 
 if (program.read)
-  console.log('Read flash to', program.read);
+  log.inf('Read flash to ' + program.read + ', ' + program.size + 'bytes.');
 else if (program.write)
-  console.log('Write file to', program.write);
+  log.inf('Write file to ' + program.write);
 else if (program.info)
-  console.log('Get flash info');
+  log.inf('Get flash info');
+else if (program.erase)
+  log.inf('Erase flash');
 else
 {
   program.help();
-  console.log('Exit');
-  process.exit(1);
+  exit(1, 'Exit');
 }
 //===========================================================================
 var arduino = new arduino_serial(program.port);
@@ -83,85 +88,95 @@ var findInBuffer = function(what, where)
   return undefined;
 }
 
-var readWrite = function()
+var readMode = function(callback)
 {
-  if (program.read)
+  log.inf('Read flash to file.')
+
+  var offset = 0;
+  var length = Number(program.size); //340592;
+  var bitFile = new Buffer(length);
+  var prevPercent = '';
+
+  var read = function()
   {
-    log.inf('Read flash to file.')
+    arduino.readData(offset, 255, function(err, data) {
+      if (err)
+        return callback(err);
 
-    var offset = 0;
-    var length = 340592;
-    var bitFile = new Buffer(length);
+      data.copy(bitFile, offset);
+      offset += 255;
 
-    var read = function()
-    {
-      arduino.readData(offset, 255, function(err, data) {
-        console.log(err, offset);
-        data.copy(bitFile, offset);
-        offset += 255;
+      if (offset >= length)
+      {
+        fs.writeFileSync(program.read, bitFile);
+        log.inf('Read bit file is done.');
+        callback(false);
+      }
+      else
+      {
+        read();
+      }
 
-        if (offset >= length)
+      var percent = Math.round(100 * (offset / length));
+      if (percent != prevPercent)
         {
-          fs.writeFileSync(program.read, bitFile);
-          log.inf('Read bit file is done.');
+          log.inf(percent + '% read.');
+          prevPercent = percent;
         }
-        else
-        {
-          read();
-        }
-      });
+    });
 
-    };
-    read();
-  }
-  else if (program.write)
+  };
+  read();
+}
+
+var writeMode = function(callback)
+{
+  log.inf('Write file to flash.')
+  var bitFile = fs.readFileSync(program.write);
+  var preambule = new Buffer([0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0x99, 0x55, 0x66]);
+  var preambuleOffset = findInBuffer(preambule, bitFile);
+
+  if (preambuleOffset == undefined)
   {
-    log.inf('Write file to flash.')
-    var bitFile = fs.readFileSync(program.write);
-    var preambule = new Buffer([0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0x99, 0x55, 0x66]);
-    var preambuleOffset = findInBuffer(preambule, bitFile);
-
-    if (preambuleOffset == undefined)
-    {
-      log.err(program.write + ' is not valid bit file.');
-      process.exit(1);
-    }
-
-    bitFile = bitFile.slice(preambuleOffset);
-    log.inf('Write to flash ' + bitFile.length + ' bytes.');
-
-    var offset = 0;
-    var length = bitFile.length;
-    var write = function()
-    {
-      var writeLength = length > 64 ? 64 : length;
-      var data = bitFile.slice(offset, offset + writeLength);
-      arduino.writeData(offset, data, function(err, addr, res) {
-        if (err)
-        {
-          log.err('Can\'t write bit file.');
-          process.exit(1);
-        }
-        offset += writeLength;
-        length -= writeLength;
-        if (length == 0)
-        {
-            log.inf('Bit file uploaded.');
-        }
-        else
-        {
-          setImmediate(write);
-        }
-        console.log('Write', writeLength, 'to', offset);
-      });
-    }
-    write();
+    exit(1, program.write + ' is not valid bit file.');
   }
-  else
+
+  bitFile = bitFile.slice(preambuleOffset);
+  log.inf('Write to flash ' + bitFile.length + ' bytes.');
+
+  var offset = 0;
+  var length = bitFile.length;
+  var prevPercent = '';
+  var write = function()
   {
-    log.inf('Done.')
-    process.exit(0);
+    var writeLength = length > 64 ? 64 : length;
+    var data = bitFile.slice(offset, offset + writeLength);
+    arduino.writeData(offset, data, function(err, addr, res) {
+      if (err)
+      {
+        callback('Can\'t write bit file.');
+      }
+      offset += writeLength;
+      length -= writeLength;
+      if (length == 0)
+      {
+          log.inf('Bit file uploaded.');
+          callback(false);
+      }
+      else
+      {
+        setImmediate(write);
+      }
+
+      var percent = Math.round(100 * (offset / bitFile.length));
+      if (percent != prevPercent)
+      {
+        log.inf(percent + '% written.');
+        prevPercent = percent;
+      }
+    });
   }
+  write();
 }
 
 var eraseChip = function(callback)
@@ -180,8 +195,7 @@ var eraseChip = function(callback)
           var now = new Date();
           if (now - startTime > 20000)
           {
-            log.err('Timeout chip erase.');
-            process.exit(1);
+            callback('Timeout chip erase.');
           }
           if (status.wip)
           {
@@ -190,7 +204,7 @@ var eraseChip = function(callback)
           else
           {
             log.inf('Erased')
-            callback();
+            callback(false);
           }
         });
       }
@@ -201,13 +215,58 @@ var eraseChip = function(callback)
 
 var start = function()
 {
-    if (program.erase)
+    if (program.erase && program.read)
     {
-      eraseChip(readWrite);
+      eraseChip(function(err) {
+        if (err) return exit(1, err);
+        readMode(function(err) {
+          if (err) return exit(1, err);
+          exit(0);
+        });
+      });
+    }
+    else if (program.erase && program.write)
+    {
+      eraseChip(function(err) {
+        if (err) return exit(1, err);
+        writeMode(function(err) {
+          if (err) return exit(1, err);
+          exit(0);
+        });
+      });
+    }
+    else if (program.write)
+    {
+      arduino.program(0, function(err) {
+        if (err) return exit(1, err);
+
+        writeMode(function(err) {
+          if (err) return exit(1, err);
+          arduino.program(1, exit);
+          exit(0);
+        });
+
+      });
+    }
+    else if (program.read)
+    {
+      readMode(function(err) {
+        if (err) return exit(1, err);
+        exit(0);
+      });
+    }
+    else if (program.erase)
+    {
+      eraseChip(function(err) {
+        if (err)
+          exit(1, err);
+        else
+          exit(0);
+        });
     }
     else
     {
-      readWrite();
+      exit(0, 'Done.')
     }
 }
 
@@ -223,6 +282,17 @@ var linkToDevice = function()
       start();
     }
   });
+}
+
+var exit = function(err, msg)
+{
+  if (msg)
+    if (err)
+      log.err('EXIT: ' + msg);
+    else
+      log.inf('EXIT: ' + msg);
+
+  process.exit(err)
 }
 
 arduino.on('ready', function() {

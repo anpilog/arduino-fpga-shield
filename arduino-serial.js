@@ -30,6 +30,9 @@ var CMD_DEVICE_ID     = 0x8B // no payload                               || [dev
 var CMD_MANUF_ID      = 0x8C // no payload                               || [manufacture id]                        ||
 var CMD_JEDEC_ID      = 0x8D // no payload                               || [manufacture id][memory type][capacity] ||
 //  -------------------------//-------------------------------------------------------------------------------------||
+var CMD_PROGRAM_B     = 0x8E // [level]                                  || no payload                              ||
+var CMD_DONE          = 0x8F // no payload                               || [level]                                 ||
+//  -------------------------//-------------------------------------------------------------------------------------||
 var STATUS_REG_SRP    = 0x80 // The Status Register Protect              ||                                         ||
 var STATUS_REG_REV    = 0x40 // Reserved Bits                            ||                                         ||
 var STATUS_REG_BP3    = 0x20 // Block Protect Bits BP3                   ||                                         ||
@@ -58,13 +61,12 @@ module.exports = function Arduino(serialport)
   });
 
   self.serial.on('open', function() {
-    console.log('SERIAL OPEN');
     self.connected = true;
     self.emit('ready');
   });
 
   self.serial.on('error', function(err) {
-    console.log('SERIAL ERROR', err);
+    log.err('SERIAL ERROR', err);
   });
 
   function onData(msg) {
@@ -112,7 +114,7 @@ module.exports = function Arduino(serialport)
       }
       else
       {
-        console.log('Wrong command:', msg[0]);
+        log.err('Wrong command:', msg[0]);
         self.callback(true, msg.slice(1));
       }
     }
@@ -137,6 +139,25 @@ module.exports = function Arduino(serialport)
     data.copy(buf, 1)
     self.serial.write(slip.generator(buf));
     setCallback(CMD_SPI_REQUEST, callback);
+  };
+
+  self.program = function(level, callback)
+  {
+    var buf = new Buffer(2);
+    buf[0] = CMD_PROGRAM_B;
+    buf[1] = level ? 1 : 0;
+    self.serial.write(slip.generator(buf));
+    setCallback(CMD_PROGRAM_B, callback);
+  };
+
+  self.done = function(callback)
+  {
+    var buf = new Buffer(1);
+    buf[0] = CMD_DONE;
+    self.serial.write(slip.generator(buf));
+    setCallback(CMD_DONE, function(msg) {
+      callback(msg[1]);
+    });
   };
 
   self.deviceId = function(callback)
@@ -229,7 +250,7 @@ module.exports = function Arduino(serialport)
   self.writeData = function(addr, data, callback)
   {
     self.writeEnable(function(err) {
-      console.log('writeEnable:', err);
+      //console.log('writeEnable:', err);
       if (err) return callback(true);
 
       var buf = new Buffer(data.length + 4);
@@ -240,12 +261,12 @@ module.exports = function Arduino(serialport)
       data.copy(buf, 4);
 
       setCallback(CMD_PAGE_PROGRAM, function(err, msg) {
-        console.log('CMD_PAGE_PROGRAM:', err, msg);
+        //console.log('CMD_PAGE_PROGRAM:', err, msg);
         if (err) return callback(true);
         callback(false, (msg[0] << 16) | (msg[1] << 8) | msg[2], msg[3]);
       });
 
-      console.log('Write data:', buf);
+      //console.log('Write data:', buf);
       self.serial.write(slip.generator(buf));
 
     });

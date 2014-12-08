@@ -179,6 +179,9 @@ SLIP slip;
 #define CMD_MANUF_ID            0x8C // no payload                               || [manufacture id]                        ||
 #define CMD_JEDEC_ID            0x8D // no payload                               || [manufacture id][memory type][capacity] ||
 //-----------------------------------//-------------------------------------------------------------------------------------||
+#define CMD_PROGRAM_B           0x8E // [level]                                  || no payload                              ||
+#define CMD_DONE                0x8F // no payload                               || [level]                                 ||
+//-----------------------------------//-------------------------------------------------------------------------------------||
 #define SPI_FLASH_WRITE_ENABLE  0x06 // no data                                                                             ||
 #define SPI_FLASH_WRITE_DISABLE 0x04 // no data                                                                             ||
 #define SPI_FLASH_READ_STATUS   0x05 // [status byte]                                                                       ||
@@ -242,6 +245,18 @@ void cammandProcessor(byte* buffer, int length)
       digitalWrite(SS, HIGH);
       slip.slipStart(cmd);
       slip.slipSend(buffer+1, length-1);
+      slip.slipEnd();
+      break;
+    //--------------------------------------------------------
+    case CMD_PROGRAM_B:
+      digitalWrite(PROGRAM, buffer[1]);
+      slip.slipStart(cmd);
+      slip.slipEnd();
+      break;
+    //--------------------------------------------------------
+    case CMD_DONE:
+      slip.slipStart(cmd);
+      digitalRead(DONE);
       slip.slipEnd();
       break;
     //--------------------------------------------------------
@@ -423,9 +438,11 @@ void setup()
 {
   pinMode(SS,      OUTPUT);
   pinMode(MUX_SEL, OUTPUT);
+  pinMode(PROGRAM, OUTPUT);
   pinMode(DONE,    INPUT_PULLUP);
 
   digitalWrite(SS,      HIGH);
+  digitalWrite(PROGRAM, HIGH);
   digitalWrite(MUX_SEL, HIGH);
 
   SPI.begin();
